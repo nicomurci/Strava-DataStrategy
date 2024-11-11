@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mapa de Rutas por Desnivel</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.6.3/nouislider.min.css" />
+  <style>
+    #map {
+      height: 600px;
+      width: 100%;
+    }
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 20px 0;
+    }
+    #slider, #desired-slider, #routes-count-slider {
+      width: 300px;
+    }
+    .button-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: 20px;
+    }
+    /* Colores personalizados para cada slider */
+    .noUi-target.noUi-ltr.noUi-horizontal.noUi-txt-dir-ltr {
+      border: none;
+    }
+    #slider .noUi-connect {
+      background: #007bff;
+    }
+    #slider .noUi-handle {
+      background: #0056b3;
+    }
+    #desired-slider .noUi-connect {
+      background: #28a745;
+    }
+    #desired-slider .noUi-handle {
+      background: #1e7e34;
+    }
+    #routes-count-slider .noUi-connect {
+      background: #28a745;
+    }
+    #routes-count-slider .noUi-handle {
+      background: #1e7e34;
+    }
+    /* Centrado del título */
+    h2 {
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Recomendador de Etapas de Ciclismo Basado en Desnivel</h2>
+
+<!-- Primer slider: Rango de desnivel histórico -->
+<div class="slider-container">
+  <label for="slider">Rango de Desnivel Histórico (metros): </label>
+  <div id="slider"></div>
+  <div class="button-container">
+    <span id="rangeLabel"></span>
+    <button type="button" onclick="applyElevationFilter()">Ver Mis Actividades Históricas</button>
+  </div>
+</div>
+
+<!-- Botón para cargar la malla de nuevas rutas desde OSM -->
+<div style="margin: 10px 0;">
+  <button onclick="cargarNuevasRutasOSM()">Cargar Malla Nuevas Rutas</button>
+</div>
+
+<!-- Segundo slider: Rango de desnivel deseado -->
+<div class="slider-container">
+  <label for="desired-slider">Rango de Desnivel Deseado (metros): </label>
+  <div id="desired-slider"></div>
+  <div class="button-container">
+    <span id="desiredRangeLabel"></span>
+  </div>
+</div>
+
+<!-- Slider para seleccionar la cantidad de rutas deseadas -->
+<div class="slider-container">
+  <label for="routes-count-slider">Cantidad de Rutas Nuevas a Generar:</label>
+  <div id="routes-count-slider"></div>
+  <div class="button-container">
+    <span id="routesCountLabel"></span>
+  </div>
+</div>
+
+<!-- Botón para buscar nuevas rutas -->
+<div style="margin: 10px 0;">
+  <button type="button" onclick="searchNewRoutes()">Buscar Nuevas Rutas</button>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.6.3/nouislider.min.js"></script>
+<script>
+  const map = L.map('map').setView([0, 0], 2);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  // Inicializar el slider de rango de desnivel histórico
+  const slider = document.getElementById('slider');
+  noUiSlider.create(slider, {
+    start: [2000, 3000],
+    connect: true,
+    range: {
+      'min': 0,
+      'max': 5000
+    },
+    step: 100
+  });
+
+  const rangeLabel = document.getElementById("rangeLabel");
+  slider.noUiSlider.on('update', function(values) {
+    rangeLabel.innerHTML = `${parseInt(values[0])} - ${parseInt(values[1])} metros`;
+  });
+
+  // Inicializar el slider de rango de desnivel deseado
+  const desiredSlider = document.getElementById('desired-slider');
+  noUiSlider.create(desiredSlider, {
+    start: [1500, 2500],
+    connect: true,
+    range: {
+      'min': 0,
+      'max': 5000
+    },
+    step: 100
+  });
+
+  const desiredRangeLabel = document.getElementById("desiredRangeLabel");
+  desiredSlider.noUiSlider.on('update', function(values) {
+    desiredRangeLabel.innerHTML = `${parseInt(values[0])} - ${parseInt(values[1])} metros`;
+  });
+
+  // Inicializar el slider de cantidad de rutas deseadas
+  const routesCountSlider = document.getElementById('routes-count-slider');
+  noUiSlider.create(routesCountSlider, {
+    start: [3],
+    connect: [true, false],
+    range: {
+      'min': 1,
+      'max': 5
+    },
+    step: 1
+  });
+
+  const routesCountLabel = document.getElementById("routesCountLabel");
+  routesCountSlider.noUiSlider.on('update', function(values) {
+    routesCountLabel.innerHTML = `${parseInt(values[0])} Rutas`;
+  });
+
+  // Función para aplicar el filtro de elevación en actividades históricas
+  async function applyElevationFilter() {
+    const [minElevation, maxElevation] = slider.noUiSlider.get();
+
+    const url = `http://localhost:3000/filteredRoutes?minElevation=${minElevation}&maxElevation=${maxElevation}`;
+
+    try {
+      const response = await fetch(url);
+      const routes = await response.json();
+      
+      map.eachLayer(layer => {
+        if (layer instanceof L.Polyline) {
+          map.removeLayer(layer);
+        }
+      });
+
+      routes.forEach(route => {
+        if (route.coordinates && route.coordinates.length > 0) {
+          const polyline = L.polyline(route.coordinates, { color: 'blue' }).addTo(map);
+          map.fitBounds(polyline.getBounds());
+          polyline.bindPopup(`<strong>Distancia:</strong> ${route.distance.toFixed(2)} m<br><strong>Desnivel:</strong> ${route.elevation.toFixed(2)} m<br><strong>Duración:</strong> ${route.duration} segundos`);
+        }
+      });
+    } catch (error) {
+      console.error('Error al obtener rutas filtradas:', error);
+    }
+  }
+
+  // Función para buscar nuevas rutas en función del desnivel deseado y la cantidad de rutas
+  async function searchNewRoutes() {
+    const [minElevation, maxElevation] = desiredSlider.noUiSlider.get();
+    const routesCount = parseInt(routesCountSlider.noUiSlider.get());
+
+    alert(`Buscando ${routesCount} nuevas rutas con un desnivel entre ${minElevation} y ${maxElevation} metros.`);
+    // Lógica para buscar nuevas rutas usando el rango de desnivel y cantidad de rutas deseada
+  }
+
+  async function loadPopularRoutes() {
+    try {
+      const response = await fetch("http://localhost:3000/popularRoutes");
+      const routes = await response.json();
+
+      map.eachLayer(layer => {
+        if (layer instanceof L.Polyline) {
+          map.removeLayer(layer);
+        }
+      });
+
+      routes.forEach(route => {
+        if (route.coordinates && route.coordinates.length > 0) {
+          const polyline = L.polyline(route.coordinates, { color: 'red' }).addTo(map);
+          map.fitBounds(polyline.getBounds());
+          polyline.bindPopup(`<strong>Distancia:</strong> ${route.distance.toFixed(2)} m<br><strong>Desnivel:</strong> ${route.elevation.toFixed(2)} m<br><strong>Frecuencia:</strong> ${route.count} veces`);
+        }
+      });
+    } catch (error) {
+      console.error('Error al obtener rutas populares:', error);
+    }
+  }
+
+  async function cargarNuevasRutasOSM() {
+    const query = `
+      [out:json];
+      (
+        way["highway"="motorway"](4.35,-74.4,5.0,-73.8); 
+        way["highway"="trunk"](4.35,-74.4,5.0,-73.8); 
+        way["highway"="primary"](4.35,-74.4,5.0,-73.8); 
+        way["highway"="secondary"](4.35,-74.4,5.0,-73.8); 
+        way["highway"="tertiary"](4.35,-74.4,5.0,-73.8); 
+      );
+      out geom;
+    `;
+    const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+
+    try {
+      const response = await fetch(url);
+      const data = await response.json();
+
+      data.elements.forEach(element => {
+        const latlngs = element.geometry.map(geo => [geo.lat, geo.lon]);
+        L.polyline(latlngs, { color: 'green' }).addTo(map);
+      });
+      alert("¡Rutas principales fuera de Bogotá cargadas desde OSM!");
+    } catch (error) {
+      console.error("Error al cargar rutas desde OSM:", error);
+      alert("Hubo un problema al cargar las rutas.");
+    }
+  }
+</script>
+</body>
+</html>
